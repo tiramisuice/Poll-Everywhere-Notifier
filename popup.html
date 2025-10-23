@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Poll Everywhere Notifier</title>
+  <style>
+    body {
+      width: 350px;
+      padding: 15px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      margin: 0;
+      background-color: #f8f9fa;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin: 0 0 15px 0;
+      color: #333;
+      text-align: center;
+    }
+
+    .status {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      font-size: 14px;
+      font-weight: 500;
+      text-align: center;
+    }
+
+    .status.active {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+
+    .status.inactive {
+      background-color: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeaa7;
+    }
+
+    .status.warning {
+      background-color: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+
+    .stats {
+      margin: 15px 0;
+      padding: 12px;
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+
+    .stat-label {
+      font-weight: 500;
+      color: #666;
+    }
+
+    .stat-value {
+      color: #333;
+      font-weight: 600;
+    }
+
+    .buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 15px 0;
+    }
+
+    .button {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .button.primary {
+      background-color: #007bff;
+      color: white;
+    }
+
+    .button.primary:hover:not(:disabled) {
+      background-color: #0056b3;
+    }
+
+    .button.secondary {
+      background-color: #6c757d;
+      color: white;
+    }
+
+    .button.secondary:hover:not(:disabled) {
+      background-color: #545b62;
+    }
+
+    .button.success {
+      background-color: #28a745;
+      color: white;
+    }
+
+    .button.success:hover:not(:disabled) {
+      background-color: #1e7e34;
+    }
+
+    .button.danger {
+      background-color: #dc3545;
+      color: white;
+    }
+
+    .button.danger:hover:not(:disabled) {
+      background-color: #c82333;
+    }
+
+    .history {
+      margin: 15px 0;
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .history-header {
+      padding: 10px 12px;
+      border-bottom: 1px solid #eee;
+      font-weight: 600;
+      font-size: 14px;
+      color: #333;
+    }
+
+    .question-item {
+      padding: 10px 12px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .question-item:last-child {
+      border-bottom: none;
+    }
+
+    .question-text {
+      font-size: 13px;
+      color: #333;
+      margin-bottom: 4px;
+      line-height: 1.3;
+    }
+
+    .question-time {
+      font-size: 11px;
+      color: #666;
+    }
+
+    .no-questions {
+      padding: 20px 12px;
+      text-align: center;
+      color: #666;
+      font-size: 13px;
+      font-style: italic;
+    }
+
+    .error {
+      padding: 10px 12px;
+      color: #dc3545;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .info {
+      margin-top: 15px;
+      padding: 10px;
+      background-color: #e7f3ff;
+      border-left: 3px solid #007bff;
+      font-size: 12px;
+      color: #004085;
+      border-radius: 0 4px 4px 0;
+    }
+
+    .footer {
+      margin-top: 15px;
+      text-align: center;
+      font-size: 11px;
+      color: #999;
+    }
+
+    .refresh-btn {
+      background: none;
+      border: none;
+      color: #007bff;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+
+    .refresh-btn:hover {
+      background-color: #f0f0f0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔔 Poll Everywhere Notifier</h1>
+
+  <div id="status" class="status">
+    <span id="statusText">Checking status...</span>
+  </div>
+
+  <div class="stats">
+    <div class="stat-item">
+      <span class="stat-label">Questions Tracked:</span>
+      <span class="stat-value" id="questionCount">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Notifications Sent:</span>
+      <span class="stat-value" id="notificationCount">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Last Check:</span>
+      <span class="stat-value">
+        <span id="lastCheck">Never</span>
+        <button id="refreshStatus" class="refresh-btn" title="Refresh">🔄</button>
+      </span>
+    </div>
+  </div>
+
+  <div class="buttons">
+    <button id="testNotification" class="button primary">Test Notification</button>
+    <button id="forceCheck" class="button success">Force Check Now</button>
+    <button id="clearData" class="button danger">Clear All Data</button>
+  </div>
+
+  <div class="history">
+    <div class="history-header">Recent Questions</div>
+    <div id="questionHistory">
+      <div class="no-questions">Loading...</div>
+    </div>
+  </div>
+
+  <div class="info">
+    <strong>How to use:</strong><br>
+    1. Navigate to a Poll Everywhere page<br>
+    2. The extension will automatically monitor for new questions<br>
+    3. You'll get a notification when a new question appears!
+  </div>
+
+  <div class="footer">
+    v1.0.0 - Beta, made with the desire of skipping Econ 200>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
