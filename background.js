@@ -13,14 +13,21 @@ chrome.runtime.onInstalled.addListener(async () => {
   
   console.log('✅ Poll Everywhere Notifier installed and initialized');
   
-  // Show welcome notification
-  chrome.notifications.create({
-    type: 'basic',
-    iconUrl: 'icons/icon128.png',
-    title: 'Poll Everywhere Notifier Ready!',
-    message: 'Navigate to a Poll Everywhere page to start monitoring for new questions.',
-    priority: 1
-  });
+  // Show welcome notification and check permissions
+  setTimeout(async () => {
+    const hasPermission = await checkNotificationPermission();
+    if (hasPermission) {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: 'Poll Everywhere Notifier Ready!',
+        message: 'Navigate to a Poll Everywhere page to start monitoring for new questions.',
+        priority: 1
+      });
+    } else {
+      console.log('🔔 Notifications not permitted - user will need to enable them manually');
+    }
+  }, 1000);
 });
 
 // Listen for messages from content script
@@ -43,15 +50,37 @@ async function handleNewQuestion(questionData, tab) {
   console.log('🔍 Processing new question:', questionData.text.substring(0, 50));
 
   try {
-    const { knownQuestions = [], notificationCount = 0 } = await chrome.storage.local.get([
+    const { knownQuestions = [], notificationCount = 0, lastNotificationTime = 0 } = await chrome.storage.local.get([
       'knownQuestions', 
-      'notificationCount'
+      'notificationCount',
+      'lastNotificationTime'
     ]);
 
     // Double-check if this is truly a new question
     const isNew = !knownQuestions.some(q => q.id === questionData.id);
 
     if (isNew) {
+      // Additional rate limiting at background script level
+      const now = Date.now();
+      const timeSinceLastNotification = now - lastNotificationTime;
+      const minTimeBetweenNotifications = 3000; // 3 seconds minimum between notifications
+      
+      if (timeSinceLastNotification < minTimeBetweenNotifications) {
+        console.log(`⏰ Background rate limiting: ${minTimeBetweenNotifications - timeSinceLastNotification}ms until next notification allowed`);
+        // Still add to known questions to prevent spam, but don't notify
+        knownQuestions.push({
+          ...questionData,
+          tabId: tab?.id,
+          tabUrl: tab?.url
+        });
+        
+        await chrome.storage.local.set({
+          knownQuestions,
+          lastCheck: new Date().toISOString()
+        });
+        return;
+      }
+
       console.log('✨ Confirmed new question! Showing notification...');
 
       // Add to known questions
@@ -65,7 +94,8 @@ async function handleNewQuestion(questionData, tab) {
       await chrome.storage.local.set({
         knownQuestions,
         lastCheck: new Date().toISOString(),
-        notificationCount: notificationCount + 1
+        notificationCount: notificationCount + 1,
+        lastNotificationTime: now
       });
 
       // Show notification
@@ -101,9 +131,38 @@ async function updateQuestionsData(questionsData) {
   }
 }
 
+// Check if notifications are permitted
+async function checkNotificationPermission() {
+  return new Promise((resolve) => {
+    chrome.notifications.getPermissionLevel((level) => {
+      console.log('🔔 Notification permission level:', level);
+      resolve(level === 'granted');
+    });
+  });
+}
+
 // Show browser notification
 async function showNotification(questionData, tab) {
   console.log('🔔 Creating notification for:', questionData.text.substring(0, 50));
+
+  // Check if notifications are permitted
+  const hasPermission = await checkNotificationPermission();
+  if (!hasPermission) {
+    console.warn('⚠️ Notifications not permitted, requesting permission...');
+    // Try to request permission by creating a simple notification
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'Poll Everywhere Notifier',
+      message: 'Please allow notifications to receive alerts for new questions.',
+      priority: 1
+    }, () => {
+      if (chrome.runtime.lastError) {
+        console.error('❌ Permission request failed:', chrome.runtime.lastError);
+      }
+    });
+    return false;
+  }
 
   const notificationOptions = {
     type: 'basic',
@@ -113,7 +172,7 @@ async function showNotification(questionData, tab) {
       ? questionData.text.substring(0, 97) + '...'
       : questionData.text,
     priority: 2,
-    requireInteraction: true,
+    requireInteraction: false, // Changed to false for better macOS compatibility
     buttons: [
       { title: 'Open Poll' },
       { title: 'Dismiss' }
@@ -154,8 +213,12 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
     if (buttonIndex === 0) { // Open Poll
       if (data.tabId) {
         // Switch to the tab with the poll
-        chrome.tabs.update(data.tabId, { active: true });
-        chrome.windows.update(data.tabId, { focused: true });
+        chrome.tabs.update(data.tabId, { active: true }, (tab) => {
+          if (tab && tab.windowId) {
+            // Focus the window containing the tab
+            chrome.windows.update(tab.windowId, { focused: true });
+          }
+        });
       } else if (data.tabUrl) {
         // Open new tab with the poll
         chrome.tabs.create({ url: data.tabUrl });
@@ -180,8 +243,12 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
   if (data) {
     if (data.tabId) {
       // Switch to the tab with the poll
-      chrome.tabs.update(data.tabId, { active: true });
-      chrome.windows.update(data.tabId, { focused: true });
+      chrome.tabs.update(data.tabId, { active: true }, (tab) => {
+        if (tab && tab.windowId) {
+          // Focus the window containing the tab
+          chrome.windows.update(tab.windowId, { focused: true });
+        }
+      });
     } else if (data.tabUrl) {
       // Open new tab with the poll
       chrome.tabs.create({ url: data.tabUrl });

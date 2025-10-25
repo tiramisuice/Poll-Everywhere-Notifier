@@ -9,6 +9,8 @@ let knownQuestionIds = new Set();
 let isInitialized = false;
 let lastLogTime = 0;
 let monitoringInterval = null;
+let isChecking = false; // Prevent concurrent checks
+let lastNotificationTime = 0; // Track when last notification was sent
 
 // Wait for page to be fully loaded
 function waitForPageLoad() {
@@ -70,6 +72,12 @@ function extractQuestions() {
               !text.toLowerCase().includes('dismiss') &&
               !text.toLowerCase().includes('open poll') &&
               !text.toLowerCase().includes('poll everywhere notifier') &&
+              !text.toLowerCase().includes('join presentation') &&
+              !text.toLowerCase().includes('presenter\'s username') &&
+              !text.toLowerCase().includes('recent presentations') &&
+              !text.toLowerCase().includes('enter your response') &&
+              !text.toLowerCase().includes('loading') &&
+              !text.toLowerCase().includes('please wait') &&
               !seenTexts.has(text)) {
             
             seenTexts.add(text);
@@ -123,6 +131,12 @@ function extractQuestions() {
             !text.toLowerCase().includes('dismiss') &&
             !text.toLowerCase().includes('open poll') &&
             !text.toLowerCase().includes('poll everywhere notifier') &&
+            !text.toLowerCase().includes('join presentation') &&
+            !text.toLowerCase().includes('presenter\'s username') &&
+            !text.toLowerCase().includes('recent presentations') &&
+            !text.toLowerCase().includes('enter your response') &&
+            !text.toLowerCase().includes('loading') &&
+            !text.toLowerCase().includes('please wait') &&
             !seenTexts.has(text)) {
           seenTexts.add(text);
           const questionId = generateQuestionId(text, window.location.href);
@@ -164,6 +178,12 @@ function extractQuestions() {
         !text.toLowerCase().includes('dismiss') &&
         !text.toLowerCase().includes('open poll') &&
         !text.toLowerCase().includes('poll everywhere notifier') &&
+        !text.toLowerCase().includes('join presentation') &&
+        !text.toLowerCase().includes('presenter\'s username') &&
+        !text.toLowerCase().includes('recent presentations') &&
+        !text.toLowerCase().includes('enter your response') &&
+        !text.toLowerCase().includes('loading') &&
+        !text.toLowerCase().includes('please wait') &&
         !text.toLowerCase().includes('recorded') &&
         !text.toLowerCase().includes('participate') &&
         // Look for actual question-like content
@@ -224,6 +244,26 @@ function isExtensionContextValid() {
   }
 }
 
+// Check if notifications are enabled
+async function areNotificationsEnabled() {
+  try {
+    if (!isExtensionContextValid()) {
+      return false;
+    }
+    
+    const hasPermission = await new Promise((resolve) => {
+      chrome.notifications.getPermissionLevel((level) => {
+        resolve(level === 'granted');
+      });
+    });
+    
+    return hasPermission;
+  } catch (error) {
+    console.error('Error checking notification permission:', error);
+    return false;
+  }
+}
+
 // Stop monitoring when extension context is invalidated
 function stopMonitoring() {
   if (monitoringInterval) {
@@ -235,12 +275,20 @@ function stopMonitoring() {
 
 // Check for new questions
 async function checkForNewQuestions() {
+  // Prevent concurrent checks
+  if (isChecking) {
+    console.log('⏳ Check already in progress, skipping...');
+    return;
+  }
+
   // Check if extension context is still valid
   if (!isExtensionContextValid()) {
     console.log('🔄 Extension context invalidated, stopping monitoring');
     stopMonitoring();
     return;
   }
+
+  isChecking = true;
 
   try {
     const currentQuestions = extractQuestions();
@@ -266,30 +314,55 @@ async function checkForNewQuestions() {
     if (newQuestions.length > 0) {
       console.log('🎯 NEW QUESTION(S) DETECTED!', newQuestions.length);
       
-      // Send each new question to background script
-      for (const question of newQuestions) {
-        console.log('📤 Sending notification for:', question.text.substring(0, 50));
+      // Rate limiting: Don't send notifications too frequently
+      const now = Date.now();
+      const timeSinceLastNotification = now - lastNotificationTime;
+      const minTimeBetweenNotifications = 5000; // 5 seconds minimum between notifications
+      
+      if (timeSinceLastNotification < minTimeBetweenNotifications) {
+        console.log(`⏰ Rate limiting: ${minTimeBetweenNotifications - timeSinceLastNotification}ms until next notification allowed`);
+        // Still add to known questions to prevent spam, but don't notify
+        newQuestions.forEach(question => {
+          knownQuestionIds.add(question.id);
+        });
+      } else {
+        // Check if notifications are enabled before sending
+        const notificationsEnabled = await areNotificationsEnabled();
         
-        try {
-          if (isExtensionContextValid()) {
-            await chrome.runtime.sendMessage({
-              type: 'NEW_QUESTION_DETECTED',
-              data: question
-            });
-            
-            // Add to known questions
+        if (!notificationsEnabled) {
+          console.log('🔕 Notifications disabled, adding questions to known list without notifying');
+          // Still add to known questions to prevent spam, but don't notify
+          newQuestions.forEach(question => {
             knownQuestionIds.add(question.id);
-            console.log('✅ Question processed successfully');
-          } else {
-            console.log('⚠️ Extension context invalid, skipping message send');
+          });
+        } else {
+          // Send each new question to background script
+          for (const question of newQuestions) {
+            console.log('📤 Sending notification for:', question.text.substring(0, 50));
+            
+            try {
+              if (isExtensionContextValid()) {
+                await chrome.runtime.sendMessage({
+                  type: 'NEW_QUESTION_DETECTED',
+                  data: question
+                });
+                
+                // Add to known questions
+                knownQuestionIds.add(question.id);
+                lastNotificationTime = now;
+                console.log('✅ Question processed successfully');
+              } else {
+                console.log('⚠️ Extension context invalid, skipping message send');
+              }
+            } catch (error) {
+              if (error.message.includes('Extension context invalidated')) {
+                console.log('🔄 Extension context invalidated, stopping monitoring');
+                stopMonitoring();
+                return;
+              }
+              console.error('❌ Failed to send message:', error);
+            }
           }
-        } catch (error) {
-          if (error.message.includes('Extension context invalidated')) {
-            console.log('🔄 Extension context invalidated, stopping monitoring');
-            stopMonitoring();
-            return;
-          }
-          console.error('❌ Failed to send message:', error);
         }
       }
     } else if (currentQuestions.length > 0) {
@@ -329,6 +402,8 @@ async function checkForNewQuestions() {
       return;
     }
     console.error('❌ Error in checkForNewQuestions:', error);
+  } finally {
+    isChecking = false;
   }
 }
 
@@ -355,7 +430,19 @@ function setupMutationObserver() {
     
     if (shouldCheck) {
       console.log('🔄 DOM changed, checking for new questions...');
-      setTimeout(checkForNewQuestions, 1000); // Debounce
+      // Longer debounce to prevent spam from rapid DOM changes
+      setTimeout(() => {
+        // Only check if enough time has passed since last notification
+        const now = Date.now();
+        const timeSinceLastNotification = now - lastNotificationTime;
+        const minTimeBetweenChecks = 3000; // 3 seconds minimum between DOM-triggered checks
+        
+        if (timeSinceLastNotification > minTimeBetweenChecks) {
+          checkForNewQuestions();
+        } else {
+          console.log('⏰ Skipping DOM-triggered check - too soon since last notification');
+        }
+      }, 2000); // Longer debounce
     }
   });
 
@@ -417,7 +504,17 @@ async function initialize() {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && isInitialized) {
     console.log('👀 Page became visible, checking for questions...');
-    setTimeout(checkForNewQuestions, 1000);
+    // Don't check immediately when switching to tab to prevent spam notifications
+    // Only check if enough time has passed since last notification
+    const now = Date.now();
+    const timeSinceLastNotification = now - lastNotificationTime;
+    const minTimeBetweenChecks = 10000; // 10 seconds minimum between checks when switching tabs
+    
+    if (timeSinceLastNotification > minTimeBetweenChecks) {
+      setTimeout(checkForNewQuestions, 2000); // Longer delay when switching tabs
+    } else {
+      console.log('⏰ Skipping check on tab switch - too soon since last notification');
+    }
   }
 });
 

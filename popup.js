@@ -3,11 +3,24 @@
 document.addEventListener('DOMContentLoaded', async () => {
   await updateStatus();
   await loadQuestionHistory();
+  await checkNotificationPermission();
 
   // Set up event listeners
   document.getElementById('testNotification').addEventListener('click', testNotification);
   document.getElementById('clearData').addEventListener('click', clearData);
   document.getElementById('refreshStatus').addEventListener('click', updateStatus);
+  
+  // Add notification permission button if it exists
+  const enableNotificationsBtn = document.getElementById('enableNotifications');
+  if (enableNotificationsBtn) {
+    enableNotificationsBtn.addEventListener('click', enableNotifications);
+  }
+  
+  // Add notification status check button if it exists
+  const checkStatusBtn = document.getElementById('checkNotificationStatus');
+  if (checkStatusBtn) {
+    checkStatusBtn.addEventListener('click', checkNotificationStatus);
+  }
 });
 
 // Update the status display
@@ -117,6 +130,138 @@ async function loadQuestionHistory() {
   }
 }
 
+// Check notification permission and update UI
+async function checkNotificationPermission() {
+  try {
+    const hasPermission = await new Promise((resolve) => {
+      chrome.notifications.getPermissionLevel((level) => {
+        resolve(level === 'granted');
+      });
+    });
+
+    const permissionDiv = document.getElementById('notificationPermission');
+    const enableBtn = document.getElementById('enableNotifications');
+    
+    if (permissionDiv) {
+      if (hasPermission) {
+        permissionDiv.className = 'permission granted';
+        permissionDiv.innerHTML = '✅ Notifications enabled';
+        if (enableBtn) enableBtn.style.display = 'none';
+      } else {
+        permissionDiv.className = 'permission denied';
+        permissionDiv.innerHTML = '⚠️ Notifications disabled';
+        if (enableBtn) enableBtn.style.display = 'block';
+      }
+    }
+
+    // Return the permission status for other functions to use
+    return hasPermission;
+  } catch (error) {
+    console.error('Error checking notification permission:', error);
+    return false;
+  }
+}
+
+// Check if notifications are enabled (public function)
+async function areNotificationsEnabled() {
+  try {
+    const hasPermission = await new Promise((resolve) => {
+      chrome.notifications.getPermissionLevel((level) => {
+        resolve(level === 'granted');
+      });
+    });
+    return hasPermission;
+  } catch (error) {
+    console.error('Error checking notification permission:', error);
+    return false;
+  }
+}
+
+// Check notification status and show detailed info
+async function checkNotificationStatus() {
+  const button = document.getElementById('checkNotificationStatus');
+  const originalText = button.textContent;
+  
+  button.textContent = 'Checking...';
+  button.disabled = true;
+
+  try {
+    const hasPermission = await areNotificationsEnabled();
+    
+    if (hasPermission) {
+      button.textContent = '✅ Enabled';
+      button.style.backgroundColor = '#28a745';
+      
+      // Show a test notification to confirm it works
+      await chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: '🔔 Notification Status Check',
+        message: 'Notifications are working correctly!',
+        priority: 1
+      });
+    } else {
+      button.textContent = '❌ Disabled';
+      button.style.backgroundColor = '#dc3545';
+    }
+    
+    // Update the permission display
+    await checkNotificationPermission();
+    
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+      button.style.backgroundColor = ''; // Reset to default
+    }, 3000);
+    
+  } catch (error) {
+    console.error('Error checking notification status:', error);
+    button.textContent = '❌ Error';
+    button.style.backgroundColor = '#dc3545';
+    
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+      button.style.backgroundColor = '';
+    }, 3000);
+  }
+}
+
+// Enable notifications
+async function enableNotifications() {
+  const button = document.getElementById('enableNotifications');
+  const originalText = button.textContent;
+  
+  button.textContent = 'Requesting...';
+  button.disabled = true;
+
+  try {
+    // Try to create a notification to trigger permission request
+    await chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'Poll Everywhere Notifier',
+      message: 'Please allow notifications to receive alerts for new questions.',
+      priority: 1
+    });
+    
+    button.textContent = '✓ Permission requested!';
+    setTimeout(async () => {
+      await checkNotificationPermission();
+      button.textContent = originalText;
+      button.disabled = false;
+    }, 2000);
+    
+  } catch (error) {
+    console.error('Enable notifications error:', error);
+    button.textContent = '❌ Failed';
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+    }, 2000);
+  }
+}
+
 // Test notification
 async function testNotification() {
   const button = document.getElementById('testNotification');
@@ -126,13 +271,29 @@ async function testNotification() {
   button.disabled = true;
 
   try {
+    // Check permission first
+    const hasPermission = await new Promise((resolve) => {
+      chrome.notifications.getPermissionLevel((level) => {
+        resolve(level === 'granted');
+      });
+    });
+
+    if (!hasPermission) {
+      button.textContent = '❌ Notifications disabled';
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.disabled = false;
+      }, 2000);
+      return;
+    }
+
     await chrome.notifications.create({
       type: 'basic',
       iconUrl: 'icons/icon128.png',
       title: '🧪 Test Notification',
       message: 'This is how you\'ll be notified when a new question is posted!',
       priority: 2,
-      requireInteraction: true
+      requireInteraction: false // Changed for better macOS compatibility
     });
     
     button.textContent = '✓ Sent!';
